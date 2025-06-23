@@ -1,0 +1,61 @@
+# Development Profile Configuration
+# 开发环境专用配置，启用热重载和调试功能
+
+server:
+  port: 8080
+
+spring:
+  # 开发环境数据库配置
+  datasource:
+    url: jdbc:h2:mem:livemediadb
+    driverClassName: org.h2.Driver
+    username: sa
+    password: 
+  
+  # H2控制台配置
+  h2:
+    console:
+      enabled: true
+      path: /h2-console
+  
+  # JPA配置
+  jpa:
+    database-platform: org.hibernate.dialect.H2Dialect
+    hibernate:
+      ddl-auto: create-drop  # 开发环境每次重启都重新创建表
+    show-sql: true  # 显示SQL语句，便于调试
+    properties:
+      hibernate:
+        format_sql: true  # 格式化SQL输出
+  
+  # DevTools配置
+  devtools:
+    restart:
+      enabled: true
+      additional-paths: src/main/java
+      exclude: static/**,public/**
+    livereload:
+      enabled: true
+      port: 35729
+
+# 日志配置
+logging:
+  level:
+    com.example.livemediaserver: DEBUG  # 应用日志级别
+    org.springframework.web: DEBUG     # Spring Web日志
+    org.hibernate.SQL: DEBUG           # SQL日志
+    org.hibernate.type.descriptor.sql.BasicBinder: TRACE  # SQL参数日志
+  pattern:
+    console: "%d{HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n"
+  file:
+    name: logs/live-media-server-dev.log
+
+# 管理端点配置
+management:
+  endpoints:
+    web:
+      exposure:
+        include: "*"  # 开发环境暴露所有端点
+  endpoint:
+    health:
+      show-details: always

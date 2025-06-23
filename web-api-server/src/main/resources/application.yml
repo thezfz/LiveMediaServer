@@ -1,0 +1,83 @@
+server:
+  port: 8080
+  servlet:
+    context-path: /api
+
+spring:
+  application:
+    name: live-media-server-web-api
+  
+  # Database configuration (H2 for development)
+  datasource:
+    url: jdbc:h2:mem:livemediadb
+    driver-class-name: org.h2.Driver
+    username: sa
+    password: 
+  
+  h2:
+    console:
+      enabled: true
+      path: /h2-console
+  
+  jpa:
+    hibernate:
+      ddl-auto: create-drop
+    show-sql: true
+    properties:
+      hibernate:
+        format_sql: true
+  
+  # JSON configuration
+  jackson:
+    default-property-inclusion: non_null
+    serialization:
+      write-dates-as-timestamps: false
+
+# Custom application properties
+livemediaserver:
+  # RTMP server configuration
+  rtmp:
+    host: localhost
+    port: 1935
+    
+  # Media storage configuration
+  media:
+    storage-path: ../media-data
+    hls-segment-duration: 6
+    hls-playlist-length: 10
+    
+  # Transcoder configuration
+  transcoder:
+    enabled: true
+    ffmpeg-path: ffmpeg
+    output-formats:
+      - hls
+      - mp4
+    
+  # Stream management
+  streams:
+    max-concurrent: 10
+    cleanup-interval: 300 # seconds
+    
+# Logging configuration
+logging:
+  level:
+    com.example.livemediaserver: DEBUG
+    org.springframework.web: INFO
+    org.hibernate.SQL: DEBUG
+  pattern:
+    console: "%d{yyyy-MM-dd HH:mm:ss} - %msg%n"
+    file: "%d{yyyy-MM-dd HH:mm:ss} [%thread] %-5level %logger{36} - %msg%n"
+  file:
+    name: logs/live-media-server.log
+
+# Management endpoints
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics
+      base-path: /actuator
+  endpoint:
+    health:
+      show-details: always

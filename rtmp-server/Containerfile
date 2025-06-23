@@ -1,0 +1,60 @@
+# RTMP Server Containerfile
+# 多阶段构建：编译阶段 + 运行阶段
+
+# ===================================================================
+# Stage 1: Build Stage - 编译Java源码
+# ===================================================================
+FROM registry.fedoraproject.org/fedora:40 AS builder
+
+# 安装OpenJDK 17用于编译
+RUN dnf update -y && \
+    dnf install -y java-17-openjdk-devel && \
+    dnf clean all
+
+# 设置工作目录
+WORKDIR /build
+
+# 复制源码
+COPY src ./src
+
+# 创建输出目录并编译
+RUN mkdir -p bin && \
+    javac -encoding UTF-8 -d bin src/com/example/rtmpserver/*.java
+
+# 验证编译结果
+RUN ls -la bin/com/example/rtmpserver/ && \
+    echo "✅ RTMP Server compilation completed"
+
+# ===================================================================
+# Stage 2: Runtime Stage - 最小化运行环境
+# ===================================================================
+FROM registry.fedoraproject.org/fedora:40
+
+# 只安装运行时JRE，减小镜像体积
+RUN dnf update -y && \
+    dnf install -y java-17-openjdk-headless procps-ng net-tools && \
+    dnf clean all
+
+# 创建非root用户提高安全性
+RUN useradd -r -u 1001 -g 0 rtmpuser && \
+    mkdir -p /app && \
+    chown -R rtmpuser:0 /app
+
+# 设置工作目录
+WORKDIR /app
+
+# 从构建阶段复制编译好的class文件
+COPY --from=builder --chown=rtmpuser:0 /build/bin ./bin
+
+# 切换到非root用户
+USER rtmpuser
+
+# 暴露RTMP端口
+EXPOSE 1935
+
+# 健康检查 - 检查RTMP端口是否监听
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+    CMD netstat -tuln | grep :1935 || exit 1
+
+# 启动RTMP服务器
+CMD ["java", "-cp", "bin", "com.example.rtmpserver.Server"]

@@ -1,0 +1,39 @@
+# FFmpeg转码服务容器
+# 基于包含FFmpeg的Java运行时环境
+
+FROM openjdk:17-slim
+
+# 安装FFmpeg和必要工具
+RUN apt-get update && \
+    apt-get install -y \
+        ffmpeg \
+        curl \
+        && rm -rf /var/lib/apt/lists/*
+
+# 创建应用目录
+WORKDIR /app
+
+# 创建HLS输出目录
+RUN mkdir -p /app/hls
+
+# 复制Java源码
+COPY src/ /app/src/
+
+# 编译Java代码
+RUN javac -d /app/classes -cp /app/src /app/src/com/example/transcoder/*.java
+
+# 设置环境变量
+ENV JAVA_OPTS="-Xmx512m -Xms256m"
+ENV TRANSCODER_PORT=8081
+ENV OUTPUT_DIR=/app/hls
+ENV RTMP_BASE_URL=rtmp://rtmp-server:1935/live
+
+# 暴露端口
+EXPOSE 8081
+
+# 健康检查
+HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
+    CMD curl -f http://localhost:8081/health || exit 1
+
+# 启动命令
+CMD ["sh", "-c", "java $JAVA_OPTS -cp /app/classes com.example.transcoder.TranscoderMain --port $TRANSCODER_PORT --output-dir $OUTPUT_DIR --rtmp-url $RTMP_BASE_URL"]

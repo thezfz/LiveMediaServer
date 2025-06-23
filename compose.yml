@@ -1,0 +1,50 @@
+version: '3.8'
+
+services:
+  # RTMP Server (Pure Java) - 接收OBS推流
+  rtmp-server:
+    image: live-media-server/rtmp-server:latest
+    ports:
+      - "1935:1935"  # RTMP标准端口
+    environment:
+      - JAVA_OPTS=-Xmx512m -Djava.awt.headless=true
+    networks:
+      - live-media-net
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "netstat -tuln | grep :1935"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Web API Server (Spring Boot) - 提供REST API和HLS文件服务
+  web-api-server:
+    image: live-media-server/web-api-server:latest
+    ports:
+      - "8080:8080"  # Web API端口
+    volumes:
+      - ./media-data:/app/media:rw  # 挂载HLS输出目录
+    environment:
+      - SPRING_PROFILES_ACTIVE=container
+      - LIVEMEDIASERVER_RTMP_HOST=rtmp-server
+      - LIVEMEDIASERVER_RTMP_PORT=1935
+      - LIVEMEDIASERVER_MEDIA_STORAGE_PATH=/app/media
+      - JAVA_OPTS=-Xmx1g -Djava.awt.headless=true
+    depends_on:
+      rtmp-server:
+        condition: service_healthy
+    networks:
+      - live-media-net
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/api/actuator/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+networks:
+  live-media-net:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16

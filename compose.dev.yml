@@ -1,0 +1,156 @@
+# LiveMediaServer Development Mode Configuration
+# 专门用于本地开发的Docker Compose配置
+# 使用卷挂载实现快速代码迭代，无需重新构建镜像
+
+version: '3.8'
+
+services:
+  rtmp-server:
+    # 使用包含JDK的基础镜像，无需构建
+    image: openjdk:17-slim
+    container_name: livemediaserver_rtmp-server_dev
+    
+    # 将本地源码目录挂载到容器内
+    volumes:
+      - ./rtmp-server:/app
+      - ./rtmp-server/bin:/app/bin  # 编译输出目录
+    
+    working_dir: /app
+    
+    # 开发模式启动命令：编译并运行
+    command: >
+      sh -c "
+        echo '🔧 RTMP Server Development Mode' &&
+        echo '📁 Creating bin directory...' &&
+        mkdir -p bin &&
+        echo '🔨 Compiling Java sources...' &&
+        javac -encoding UTF-8 -d bin src/com/example/rtmpserver/*.java &&
+        echo '✅ RTMP Server compiled successfully!' &&
+        echo '🚀 Starting RTMP Server...' &&
+        java -cp bin com.example.rtmpserver.Server
+      "
+    
+    ports:
+      - "1935:1935"
+    
+    networks:
+      - live-media-net
+    
+    # 环境变量
+    environment:
+      - WEB_API_URL=http://web-api-server:8080
+    
+    # 健康检查 - 检查Java进程是否存在
+    healthcheck:
+      test: ["CMD", "sh", "-c", "kill -0 1 2>/dev/null || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+  web-api-server:
+    # 使用包含Maven和JDK的基础镜像
+    image: maven:3.8-openjdk-17
+    container_name: livemediaserver_web-api-server_dev
+
+    # 卷挂载：源码 + Maven缓存
+    volumes:
+      - ./web-api-server:/app
+      - ~/.m2:/root/.m2  # Maven依赖缓存持久化
+      - ./web-api-server/logs:/app/logs  # 日志目录
+      - hls-storage:/app/hls  # HLS文件共享存储
+
+    working_dir: /app
+
+    # 使用Spring Boot Maven插件启动，支持热重载
+    command: >
+      sh -c "
+        echo '🔧 Web API Server Development Mode' &&
+        echo '📦 Checking dependencies...' &&
+        mvn dependency:resolve &&
+        echo '✅ Dependencies resolved!' &&
+        echo '🚀 Starting Spring Boot with DevTools...' &&
+        mvn spring-boot:run -Dspring-boot.run.jvmArguments='-Xmx1g -Xms512m' -X
+      "
+
+    ports:
+      - "8080:8080"
+      - "35729:35729"  # LiveReload端口
+
+    networks:
+      - live-media-net
+
+    # 环境变量
+    environment:
+      - SPRING_PROFILES_ACTIVE=dev
+      - SPRING_DEVTOOLS_RESTART_ENABLED=true
+      - SPRING_DEVTOOLS_LIVERELOAD_ENABLED=true
+      - JAVA_OPTS=-Xmx1g -Xms512m -XX:+UseG1GC
+      - TRANSCODER_SERVICE_URL=http://transcoder-service:8081
+
+    # 健康检查
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/api/actuator/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  transcoder-service:
+    # 使用包含FFmpeg的Java镜像
+    image: openjdk:17-slim
+    container_name: livemediaserver_transcoder-service_dev
+
+    # 卷挂载：源码 + HLS输出
+    volumes:
+      - ./transcoder-service:/app
+      - hls-storage:/app/hls  # HLS文件共享存储
+
+    working_dir: /app
+
+    # 开发模式启动命令
+    command: >
+      sh -c "
+        echo '🔧 Transcoder Service Development Mode' &&
+        echo '📦 Installing FFmpeg...' &&
+        apt-get update && apt-get install -y ffmpeg curl &&
+        echo '🔨 Compiling Java sources...' &&
+        mkdir -p classes &&
+        find src -name '*.java' -exec javac -d classes -cp src {} + &&
+        echo '✅ Transcoder Service compiled!' &&
+        echo '🚀 Starting Transcoder Service...' &&
+        java -cp classes com.example.transcoder.TranscoderMain --port 8081 --output-dir /app/hls --rtmp-url rtmp://rtmp-server:1935/live
+      "
+
+    ports:
+      - "8081:8081"
+
+    networks:
+      - live-media-net
+
+    # 环境变量
+    environment:
+      - JAVA_OPTS=-Xmx512m -Xms256m
+
+    # 健康检查
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8081/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+networks:
+  live-media-net:
+    driver: bridge
+    name: livemediaserver_live-media-net
+
+volumes:
+  hls-storage:
+    driver: local
+
+# 开发模式说明：
+# 1. 修改代码后，Spring Boot会自动重启（几秒钟）
+# 2. RTMP服务器需要手动重启容器来重新编译
+# 3. 所有Maven依赖会缓存在本地~/.m2目录
+# 4. 使用方法：podman-compose -f compose.dev.yml up

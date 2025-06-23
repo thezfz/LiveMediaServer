@@ -1,0 +1,65 @@
+# Web API Server Containerfile
+# 多阶段构建：Maven构建阶段 + 运行阶段
+
+# ===================================================================
+# Stage 1: Build Stage - Maven构建Spring Boot应用 (优化版本)
+# ===================================================================
+# 直接使用一个包含了Maven 3.8和OpenJDK 17的官方镜像
+FROM maven:3.8-openjdk-17 AS builder
+
+# 设置工作目录
+WORKDIR /build
+
+# 首先复制pom.xml，利用Docker层缓存优化依赖下载
+COPY pom.xml .
+
+# 下载依赖（这一层会被缓存，除非pom.xml改变）
+RUN mvn dependency:go-offline -B
+
+# 复制源码
+COPY src ./src
+
+# 构建应用，跳过测试以加快构建速度
+RUN mvn clean package -DskipTests -B && \
+    echo "✅ Spring Boot application built successfully" && \
+    ls -la target/
+
+# ===================================================================
+# Stage 2: Runtime Stage - 最小化运行环境
+# ===================================================================
+FROM registry.fedoraproject.org/fedora:40
+
+# 安装运行时JRE和必要工具
+RUN dnf update -y && \
+    dnf install -y java-17-openjdk-headless curl && \
+    dnf clean all
+
+# 创建非root用户
+RUN useradd -r -u 1001 -g 0 apiuser && \
+    mkdir -p /app/media && \
+    chown -R apiuser:0 /app
+
+# 设置工作目录
+WORKDIR /app
+
+# 从构建阶段复制JAR文件
+COPY --from=builder --chown=apiuser:0 /build/target/*.jar app.jar
+
+# 切换到非root用户
+USER apiuser
+
+# 暴露Web API端口
+EXPOSE 8080
+
+# 创建媒体数据目录
+VOLUME ["/app/media"]
+
+# 健康检查 - 使用streams端点作为临时健康检查
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
+    CMD curl -f http://localhost:8080/api/streams || exit 1
+
+# JVM优化参数
+ENV JAVA_OPTS="-Xmx1g -Xms512m -XX:+UseG1GC -XX:+UseContainerSupport -Djava.awt.headless=true"
+
+# 启动Spring Boot应用
+CMD ["sh", "-c", "java $JAVA_OPTS -jar app.jar"]

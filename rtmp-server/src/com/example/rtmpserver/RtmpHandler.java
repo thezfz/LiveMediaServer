@@ -12,21 +12,32 @@ import java.util.Map;
 public class RtmpHandler implements Runnable {
 
     private final Socket socket;
+    private final ApiClient apiClient;
+
     // RTMP Message Type IDs
+    // RTMP 协议消息类型常量
     private static final int MSG_TYPE_SET_CHUNK_SIZE = 1;
     private static final int MSG_TYPE_WINDOW_ACK_SIZE = 5;
     private static final int MSG_TYPE_SET_PEER_BANDWIDTH = 6;
+    @SuppressWarnings("unused") // 保留用于将来的音频处理
     private static final int MSG_TYPE_AUDIO = 8;
+    @SuppressWarnings("unused") // 保留用于将来的视频处理
     private static final int MSG_TYPE_VIDEO = 9;
     private static final int MSG_TYPE_COMMAND_AMF0 = 20;
 
     private final Map<Integer, RtmpHeader> lastHeaders = new HashMap<>();
-    
+
     // --- THIS WAS THE MISSING VARIABLE ---
     private int clientChunkSize = 128; // RTMP default chunk size
 
-    public RtmpHandler(Socket socket) {
+    // 流相关信息
+    private String currentStreamKey = null;
+    private String clientIp = null;
+
+    public RtmpHandler(Socket socket, ApiClient apiClient) {
         this.socket = socket;
+        this.apiClient = apiClient;
+        this.clientIp = socket.getRemoteSocketAddress().toString();
     }
 
     @Override
@@ -40,6 +51,18 @@ public class RtmpHandler implements Runnable {
             // This is expected when the client disconnects.
         } finally {
             System.out.println("Client disconnected: " + socket.getRemoteSocketAddress());
+
+            // 如果有活跃的流，通知API服务器流结束
+            if (currentStreamKey != null && apiClient != null) {
+                System.out.println("🛑 Notifying stream stop for: " + currentStreamKey);
+                boolean success = apiClient.notifyStreamStop(currentStreamKey);
+                if (success) {
+                    System.out.println("✅ Successfully notified API server of stream stop");
+                } else {
+                    System.out.println("⚠️ Failed to notify API server of stream stop");
+                }
+            }
+
             try {
                 if (socket != null && !socket.isClosed()) {
                     socket.close();
@@ -174,6 +197,7 @@ public class RtmpHandler implements Runnable {
     }
     
     private static class RtmpHeader {
+        @SuppressWarnings("unused") // 保留用于将来的时间戳处理
         int timestamp;
         int messageLength;
         int messageTypeId;
@@ -194,7 +218,7 @@ public class RtmpHandler implements Runnable {
                 handleCreateStream(out, transactionId);
                 break;
             case "publish":
-                handlePublish(out, transactionId);
+                handlePublish(payload, out, transactionId);
                 break;
         }
     }
@@ -218,8 +242,46 @@ public class RtmpHandler implements Runnable {
         System.out.println("✅ 'createStream' sequence fully sent.");
     }
 
-    private void handlePublish(DataOutputStream out, double transactionId) throws IOException {
+    private void handlePublish(byte[] payload, DataOutputStream out, double transactionId) throws IOException {
         System.out.println("Handling 'publish' command.");
+
+        try {
+            // 解析publish命令以提取流密钥
+            DataInputStream payloadStream = new DataInputStream(new ByteArrayInputStream(payload));
+
+            // 跳过命令名称和事务ID（已经读取过）
+            readAmfString(payloadStream); // command name
+            readAmfNumber(payloadStream); // transaction id
+
+            // 读取null参数
+            int nullType = payloadStream.readByte();
+            if (nullType != 0x05) {
+                System.out.println("⚠️ Expected null parameter, got type: " + nullType);
+            }
+
+            // 读取流名称（流密钥）
+            String streamName = readAmfString(payloadStream);
+            this.currentStreamKey = streamName;
+
+            System.out.println("🎬 Stream publish started:");
+            System.out.println("   Stream Key: " + streamName);
+            System.out.println("   Client IP: " + clientIp);
+
+            // 通知Web API服务器流开始
+            if (apiClient != null) {
+                boolean success = apiClient.notifyStreamStart(streamName, clientIp);
+                if (success) {
+                    System.out.println("✅ Successfully notified API server of stream start");
+                } else {
+                    System.out.println("⚠️ Failed to notify API server of stream start");
+                }
+            }
+
+        } catch (Exception e) {
+            System.err.println("❌ Error parsing publish command: " + e.getMessage());
+            e.printStackTrace();
+        }
+
         sendPublishStatus(out, transactionId);
         System.out.println("✅ 'publish' sequence fully sent.");
     }
